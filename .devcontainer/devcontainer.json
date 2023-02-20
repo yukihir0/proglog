@@ -1,0 +1,11 @@
+{
+  "name": "proglog",
+  "dockerComposeFile": ["../docker/docker-compose.yml", "./docker-compose.yml"],
+  "service": "proglog",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"]
+    }
+  }
+}
