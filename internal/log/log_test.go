@@ -56,7 +56,8 @@ func testOutOfRangeErr(t *testing.T, log *Log) {
 	// ログに保存されているオフセットの範囲外を読み取ろうした場合にエラーになる検証
 	read, err := log.Read(1)
 	require.Nil(t, read)
-	require.Error(t, err)
+	apiErr := err.(api.ErrOffsetOutOfRange)
+	require.Equal(t, uint64(1), apiErr.Offset)
 	require.NoError(t, log.Close())
 }
 
