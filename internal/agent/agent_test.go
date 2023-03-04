@@ -15,9 +15,11 @@ import (
 	"github.com/yukihir0/proglog/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 func TestAgent(t *testing.T) {
+	// サーバのTLS設定
 	serverTLSConfig, err := config.SetupTLSConfig(
 		config.TLSConfig{
 			CertFile:      config.ServerCertFile,
@@ -29,6 +31,7 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// クライアントのTLS設定
 	peerTLSConfig, err := config.SetupTLSConfig(
 		config.TLSConfig{
 			CertFile:      config.RootClientCertFile,
@@ -40,19 +43,23 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// 3つのエージェントを設定する(リーダー:1台、フォロワー:2台)
 	var agents []*agent.Agent
 	for i := 0; i < 3; i++ {
+		// 利用可能なポートを見つける
 		ports := dynaport.Get(2)
 
 		// Membership(serf)で利用するポート
 		bindAddr := fmt.Sprintf("%s:%d", "127.0.0.1", ports[0])
 
-		// Serverで利用するポート
+		// gRPC/Raftで利用するポート
 		rpcPort := ports[1]
 
+		// ファイルを保存するディレクトリ
 		dataDir, err := os.MkdirTemp("", "agent-test-log")
 		require.NoError(t, err)
 
+		// フォロワーの場合、リーダーのアドレスをクラスタの初期アドレスに追加する
 		var startJoinAddrs []string
 		if i != 0 {
 			startJoinAddrs = append(
@@ -61,6 +68,7 @@ func TestAgent(t *testing.T) {
 			)
 		}
 
+		// エージェントを設定する
 		agent, err := agent.New(
 			agent.Config{
 				NodeName:        fmt.Sprintf("%d", i),
@@ -72,6 +80,7 @@ func TestAgent(t *testing.T) {
 				ACLPolicyFile:   config.ACLPolicyFile,
 				ServerTLSConfig: serverTLSConfig,
 				PeerTLSConfig:   peerTLSConfig,
+				Bootstrap:       i == 0,
 			},
 		)
 		require.NoError(t, err)
@@ -79,6 +88,7 @@ func TestAgent(t *testing.T) {
 		agents = append(agents, agent)
 	}
 
+	// テスト終了時にエージェントをシャットダウンする
 	defer func() {
 		for _, agent := range agents {
 			err := agent.Shutdown()
@@ -89,6 +99,7 @@ func TestAgent(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
+	// リーダーにログを書き込む
 	leaderClient := client(t, agents[0], peerTLSConfig)
 	produceResponse, err := leaderClient.Produce(
 		context.Background(),
@@ -100,6 +111,7 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// リーダーでログを読み込む検証
 	consumeResponse, err := leaderClient.Consume(
 		context.Background(),
 		&api.ConsumeRequest{
@@ -111,6 +123,7 @@ func TestAgent(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
+	// フォロワー1でログを読み込む検証
 	followerClient := client(t, agents[1], peerTLSConfig)
 	consumeResponse, err = followerClient.Consume(
 		context.Background(),
@@ -121,6 +134,7 @@ func TestAgent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, consumeResponse.Record.Value, []byte("foo"))
 
+	// フォロワー2でログを読み込む検証
 	followerClient = client(t, agents[2], peerTLSConfig)
 	consumeResponse, err = followerClient.Consume(
 		context.Background(),
@@ -131,30 +145,35 @@ func TestAgent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, consumeResponse.Record.Value, []byte("foo"))
 
-	// TODO
-	// consumeResponse, err = leaderClient.Consume(
-	// 	context.Background(),
-	// 	&api.ConsumeRequest{
-	// 		Offset: produceResponse.Offset + 1,
-	// 	},
-	// )
-	// require.Nil(t, consumeResponse)
-	// require.Error(t, err)
-	// got := status.Code(err)
-	// want := status.Code(api.ErrOffsetOutOfRange{}.GRPCStatus().Err())
-	// require.Equal(t, got, want)
+	// リーダーで不要なログがレプリケーションされていないことを検証
+	consumeResponse, err = leaderClient.Consume(
+		context.Background(),
+		&api.ConsumeRequest{
+			Offset: produceResponse.Offset + 1,
+		},
+	)
+	require.Nil(t, consumeResponse)
+	require.Error(t, err)
+	got := status.Code(err)
+	want := status.Code(api.ErrOffsetOutOfRange{}.GRPCStatus().Err())
+	require.Equal(t, got, want)
 }
 
+// gRPCクライアントを生成するヘルパー
 func client(t *testing.T, agent *agent.Agent, tlsConfig *tls.Config) api.LogClient {
+	// TLSを設定する
 	tlsCreds := credentials.NewTLS(tlsConfig)
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(tlsCreds)}
 
+	// gRPCサーバのアドレスを取得する
 	rpcAddr, err := agent.Config.RPCAddr()
 	require.NoError(t, err)
 
+	// gRPCサーバへ接続する
 	conn, err := grpc.Dial(rpcAddr, opts...)
 	require.NoError(t, err)
 
+	// gRPCクライアントを生成する
 	client := api.NewLogClient(conn)
 
 	return client
