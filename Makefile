@@ -1,4 +1,5 @@
 CONFIG_PATH=${HOME}/.proglog/
+TAG ?= 0.0.1
 
 .PHONY: init
 init:
@@ -53,3 +54,7 @@ $(CONFIG_PATH)/policy.csv:
 test: $(CONFIG_PATH)/policy.csv $(CONFIG_PATH)/model.conf
 	go clean -testcache
 	go test -race ./...
+
+.PHONY: build-docker
+build-docker:
+	docker build -t github.com/yukihir0/proglog:$(TAG) .
