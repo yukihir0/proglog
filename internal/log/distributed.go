@@ -296,6 +296,30 @@ func (l *DistributedLog) Close() error {
 	return l.log.Close()
 }
 
+// Raftサーバ一覧を取得するメソッド
+func (l *DistributedLog) GetServers() ([]*api.Server, error) {
+	// Raftの設定を取得する
+	future := l.raft.GetConfiguration()
+	if err := future.Error(); err != nil {
+		return nil, err
+	}
+
+	// サーバ一覧を取得する
+	var servers []*api.Server
+	for _, server := range future.Configuration().Servers {
+		servers = append(
+			servers,
+			&api.Server{
+				Id:       string(server.ID),
+				RpcAddr:  string(server.Address),
+				IsLeader: l.raft.Leader() == server.Address,
+			},
+		)
+	}
+
+	return servers, nil
+}
+
 var _ raft.FSM = (*fsm)(nil)
 
 // 有限状態機械(FSM)

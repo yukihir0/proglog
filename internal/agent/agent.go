@@ -166,6 +166,7 @@ func (a *Agent) setupServer() error {
 	serverConfig := &server.Config{
 		CommitLog:  a.log,
 		Authorizer: authorizer,
+		GetServer:  a.log,
 	}
 
 	// TLS設定

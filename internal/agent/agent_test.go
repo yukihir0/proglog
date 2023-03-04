@@ -13,6 +13,7 @@ import (
 	api "github.com/yukihir0/proglog/api/v1"
 	"github.com/yukihir0/proglog/internal/agent"
 	"github.com/yukihir0/proglog/internal/config"
+	"github.com/yukihir0/proglog/internal/loadbalance"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
@@ -111,6 +112,9 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// リーダーに書き込んだログがフォロワーにレプリケーションされるまで待つ
+	time.Sleep(3 * time.Second)
+
 	// リーダーでログを読み込む検証
 	consumeResponse, err := leaderClient.Consume(
 		context.Background(),
@@ -120,8 +124,6 @@ func TestAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, consumeResponse.Record.Value, []byte("foo"))
-
-	time.Sleep(3 * time.Second)
 
 	// フォロワー1でログを読み込む検証
 	followerClient := client(t, agents[1], peerTLSConfig)
@@ -170,7 +172,11 @@ func client(t *testing.T, agent *agent.Agent, tlsConfig *tls.Config) api.LogClie
 	require.NoError(t, err)
 
 	// gRPCサーバへ接続する
-	conn, err := grpc.Dial(rpcAddr, opts...)
+	// 独自のリゾルバとピッカーを利用するようにスキームを指定する
+	conn, err := grpc.Dial(
+		fmt.Sprintf("%s:///%s", loadbalance.Name, rpcAddr),
+		opts...,
+	)
 	require.NoError(t, err)
 
 	// gRPCクライアントを生成する
